@@ -4,7 +4,7 @@
 Actions:
 1) Checkout main branch (configurable)
 2) Remove all extra git worktrees
-3) Delete all local branches except main
+3) Delete only local branches that match seed-* or equal __baseline__ (other branches are left intact)
 4) Clear component_system runtime state/history folders
 5) Remove .pytest_cache, __pycache__, and results.tsv
 
@@ -286,8 +286,12 @@ def main() -> None:
         if line.startswith("worktree "):
             worktrees.append(Path(line[len("worktree ") :]).resolve())
 
-    branches_to_keep = {args.main_branch} | preserved_seed_ids
+    branches_to_keep = {args.main_branch} | preserved_seed_ids | baseline_branches
     worktree_keep_names = preserved_seed_ids | {"baseline"} if preserved_seed_ids else set()
+
+    def is_clearable_branch(name: str) -> bool:
+        """Only branches matching seed-xxx or exactly __baseline__ may be cleared."""
+        return name.startswith("seed-") or name == "__baseline__"
 
     for wt in worktrees:
         if wt == repo_root:
@@ -308,16 +312,16 @@ def main() -> None:
                 shutil.rmtree(wt, ignore_errors=True)
     run_git(["worktree", "prune"], cwd=repo_root, dry_run=args.dry_run)
 
-    print(f"Deleting local branches except {sorted(branches_to_keep)}...")
     branches = run_git(
         ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
         cwd=repo_root,
         dry_run=args.dry_run,
     )
-    for branch in branches:
-        if branch not in branches_to_keep:
-            print(f"  - deleting branch {branch}")
-            run_git(["branch", "-D", branch], cwd=repo_root, dry_run=args.dry_run)
+    clearable = [b for b in branches if is_clearable_branch(b) and b not in branches_to_keep]
+    print(f"Deleting clearable branches (seed-* or __baseline__): {sorted(clearable)}")
+    for branch in clearable:
+        print(f"  - deleting branch {branch}")
+        run_git(["branch", "-D", branch], cwd=repo_root, dry_run=args.dry_run)
 
     history_root = repo_root / "component_system" / "history"
     if preserved_seed_ids:
