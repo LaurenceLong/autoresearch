@@ -28,7 +28,7 @@ class TrainingSettings:
     adam_betas: tuple[float, float] = (0.8, 0.95)
     warmup_ratio: float = 0.0
     warmdown_ratio: float = 0.5
-    max_grad_norm: float = 1.0
+    max_grad_norm: float | None = None
     final_lr_frac: float = 0.0
     depth: int = 8
     device_batch_size: int = 32  # 24GB vram
@@ -113,8 +113,7 @@ def run_training_session(
                 group["momentum"] = muon_momentum
                 group["weight_decay"] = muon_weight_decay
 
-        # Gradient clipping for training stability
-        if settings.max_grad_norm > 0:
+        if settings.max_grad_norm is not None and settings.max_grad_norm > 0:
             nn_utils.clip_grad_norm_(model.parameters(), settings.max_grad_norm)
 
         optimizer.step()

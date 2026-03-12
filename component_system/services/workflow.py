@@ -608,18 +608,24 @@ class WorkflowService:
             branch_metrics = self.metrics_repo.get_for_branch(seed.baseline_branch)
             has_baseline = branch_metrics is not None and branch_metrics.get("last_val_bpb") is not None
             if not has_baseline:
-                if not (seed.status is SeedStatus.queued and seed.latest_run_id is None):
-                    seed.status = SeedStatus.queued
-                    seed.updated_at = now_ts()
-                    seed.latest_run_id = None
-                    seed.last_error = None
-                    self.seed_repo.save(seed)
-                    self.seed_repo.append_event(
-                        seed.seed_id,
-                        "p.waiting_for_baseline",
-                        "Baseline run is still in progress; Plan will queue after baseline finishes.",
-                    )
-                return None
+                baseline_seed = self.seed_repo.get(BASELINE_SEED_ID)
+                # Only wait for baseline when the baseline seed is for this branch (e.g. master).
+                # For another branch (e.g. dev), no baseline run is queued for it, so allow planning;
+                # the first DCA completion on this branch will establish baseline metrics.
+                if baseline_seed is not None and baseline_seed.baseline_branch == seed.baseline_branch:
+                    if not (seed.status is SeedStatus.queued and seed.latest_run_id is None):
+                        seed.status = SeedStatus.queued
+                        seed.updated_at = now_ts()
+                        seed.latest_run_id = None
+                        seed.last_error = None
+                        self.seed_repo.save(seed)
+                        self.seed_repo.append_event(
+                            seed.seed_id,
+                            "p.waiting_for_baseline",
+                            "Baseline run is still in progress; Plan will queue after baseline finishes.",
+                        )
+                    return None
+                # Branch has no baseline and is not the baseline seed's branch: proceed with planning.
         setup_error = self.git_service.setup_error()
         if setup_error is not None:
             raise RuntimeError(setup_error)
@@ -825,6 +831,26 @@ class WorkflowService:
         if task_path is not None and task_path.exists():
             move_to_error(task_path)
 
+    def _ralph_try_restore_worktree(self, seed: SeedRecord, ref: str | None) -> None:
+        """Reset seed worktree to ref (e.g. commit before P) and log result. No-op if ref missing or baseline seed."""
+        if not ref or not str(ref).strip() or seed.seed_id == BASELINE_SEED_ID:
+            return
+        try:
+            self.git_service.reset_seed_branch_to(seed, ref)
+            self.seed_repo.append_event(
+                seed.seed_id,
+                "ralph.worktree_restored",
+                "Restored seed worktree to commit before P for next Plan.",
+                commit_sha=ref,
+            )
+        except GitCommandError as exc:
+            self.seed_repo.append_event(
+                seed.seed_id,
+                "ralph.worktree_restore_failed",
+                f"Could not restore seed worktree to commit before P: {exc}",
+                commit_sha=ref,
+            )
+
     def mark_run_failed(
         self,
         seed_id: str,
@@ -862,6 +888,7 @@ class WorkflowService:
             and task_payload.get("merge_resolution") is not True
             and task_payload.get("metrics_recovery") is not True
         ):
+            self._ralph_try_restore_worktree(seed, run.summary.get("commit_sha_before_p"))
             try:
                 self.queue_p(seed.seed_id)
                 self.seed_repo.append_event(
@@ -1020,6 +1047,11 @@ class WorkflowService:
                 source_stdout_log_path=log_path,
                 source_stderr_log_path=stderr_log_path,
             )
+            if (
+                seed.ralph_loop_enabled
+                and seed.seed_id != BASELINE_SEED_ID
+            ):
+                self._ralph_try_restore_worktree(seed, run.summary.get("commit_sha_before_p"))
             return run
         seed.latest_metrics = metrics
         seed.latest_signal = signal
@@ -1247,23 +1279,7 @@ class WorkflowService:
             and not metrics_recovery
             and seed.seed_id != BASELINE_SEED_ID
         ):
-            ref = run.summary.get("commit_sha_before_p")
-            if ref:
-                try:
-                    self.git_service.reset_seed_branch_to(seed, ref)
-                    self.seed_repo.append_event(
-                        seed.seed_id,
-                        "ralph.worktree_restored",
-                        "Restored seed worktree to commit before P for next Plan.",
-                        commit_sha=ref,
-                    )
-                except GitCommandError as exc:
-                    self.seed_repo.append_event(
-                        seed.seed_id,
-                        "ralph.worktree_restore_failed",
-                        f"Could not restore seed worktree to commit before P: {exc}",
-                        commit_sha=ref,
-                    )
+            self._ralph_try_restore_worktree(seed, run.summary.get("commit_sha_before_p"))
         if seed.ralph_loop_enabled:
             try:
                 self.queue_p(seed.seed_id)
