@@ -66,6 +66,7 @@ class StageRun(BaseModel):
     log_path: str | None = None
     stderr_log_path: str | None = None
     prompt_path: str | None = None
+    agent_type: str | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
     metrics: dict[str, Any] = Field(default_factory=dict)
     signal: str | None = None

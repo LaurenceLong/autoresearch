@@ -1250,9 +1250,14 @@ def _worker(stage: str, lane: str = "any") -> None:
                 summary_path_pre = _summary_json_path_in_cwd(worktree_path)
                 if summary_path_pre.exists():
                     summary_path_pre.unlink()
+            # Set agent_type before run (if task halts or unexpected quit, we still have which agent was attempted).
+            agent_before = _active_agent_name()
+            WORKFLOW.set_run_agent_type(seed_id, run_id, agent_before)
             used_agent, exit_code, stdout, stderr, stdout_log_path, stderr_log_path = _invoke_agent(
                 prompt, stage, run_id, worktree_path=worktree_path
             )
+            # Set again after run (resume may have changed agent; this is the agent that actually ran).
+            WORKFLOW.set_run_agent_type(seed_id, run_id, used_agent)
 
             salvaged_ca = _should_salvage_completed_ca(stage, exit_code, run_id, worktree_path)
             summary_path = _summary_json_path_in_cwd(worktree_path)
@@ -1364,7 +1369,8 @@ def _worker(stage: str, lane: str = "any") -> None:
                         seed_id,
                         run_id,
                         f"[agent={used_agent}] {_agent_failure_reason(exit_code, stdout, stderr)}",
-                        task_path=task_path, prompt_path=prompt_path_str,
+                        task_path=task_path,
+                        prompt_path=prompt_path_str,
                     )
                 print(f"[{stage.upper()}] task {task['task_id']} failed")
         except SyncResolutionQueued:
@@ -1402,8 +1408,11 @@ def _worker(stage: str, lane: str = "any") -> None:
                     )
                 else:
                     WORKFLOW.mark_run_failed(
-                        seed_id, run_id, str(exc),
-                        task_path=task_path, prompt_path=prompt_path_str,
+                        seed_id,
+                        run_id,
+                        str(exc),
+                        task_path=task_path,
+                        prompt_path=prompt_path_str,
                     )
             except Exception:
                 traceback.print_exc()

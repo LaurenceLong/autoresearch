@@ -625,5 +625,215 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(seed.worktree_path, str(PDCA_SYSTEM_ROOT.parent))
 
 
+class AgentTypeTests(unittest.TestCase):
+    """Tests that agent_type is stored on Run records and in run summary for display."""
+
+    def test_stage_run_agent_type_default_none(self) -> None:
+        run = StageRun(
+            run_id="pd-test-001",
+            seed_id="seed-abc",
+            stage=StageName.pd,
+            status=RunStatus.queued,
+            task_id="task-pd-001",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        self.assertIsNone(run.agent_type)
+        self.assertNotIn("agent_type", run.summary)
+
+    def test_stage_run_agent_type_persists_in_model_dump(self) -> None:
+        run = StageRun(
+            run_id="ca-test-002",
+            seed_id="seed-xyz",
+            stage=StageName.ca,
+            status=RunStatus.succeeded,
+            task_id="task-ca-002",
+            created_at=0.0,
+            updated_at=0.0,
+            agent_type="claude",
+        )
+        run.summary["agent_type"] = "claude"
+        data = run.model_dump(mode="json")
+        self.assertEqual(data.get("agent_type"), "claude")
+        self.assertEqual(data.get("summary", {}).get("agent_type"), "claude")
+        restored = StageRun.model_validate(data)
+        self.assertEqual(restored.agent_type, "claude")
+        self.assertEqual(restored.summary.get("agent_type"), "claude")
+
+    def test_finish_pd_run_stores_agent_type(self) -> None:
+        git_service = RecordingGitService()
+        service = WorkflowService(git_service=git_service)
+        seed = service.create_seed("pd agent type", baseline_branch="master")
+        pd_run = StageRun(
+            run_id="pd-20990101-000096-agenttype",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.running,
+            task_id="task-pd-096",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(pd_run)
+        seed.latest_run_id = pd_run.run_id
+        service.seed_repo.save(seed)
+        summary_path = write_summary_file({
+            "idea": "test idea",
+            "target_component": "model",
+            "description": "desc",
+            "source_refs": [],
+            "commit_sha": "abc123",
+            "completed_at": "2099-01-01 00:00:00",
+        })
+        service.set_run_agent_type(seed.seed_id, pd_run.run_id, "claude")
+        service.finish_pd_run(seed.seed_id, pd_run.run_id, summary_path)
+        updated = service.require_run(pd_run.run_id)
+        self.assertEqual(updated.agent_type, "claude")
+        self.assertEqual(updated.summary.get("agent_type"), "claude")
+
+    def test_finish_ca_run_stores_agent_type(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("ca agent type", baseline_branch="master")
+        run = StageRun(
+            run_id="ca-20990101-000099-agenttype",
+            seed_id=seed.seed_id,
+            stage=StageName.ca,
+            status=RunStatus.running,
+            task_id="task-ca-099",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        summary_path = write_summary_file({
+            "checks": ["entrypoint"],
+            "notes": "done",
+            "metrics": {TARGET_METRIC_KEY: 1.10, "training_seconds": 100},
+        })
+        service.set_run_agent_type(seed.seed_id, run.run_id, "opencode")
+        service.finish_ca_run(seed.seed_id, run.run_id, summary_path)
+        updated = service.require_run(run.run_id)
+        self.assertEqual(updated.agent_type, "opencode")
+
+    def test_finish_direct_code_run_stores_agent_type(self) -> None:
+        service = WorkflowService()
+        seed, run = service.create_direct_code_seed("direct agent type")
+        service.mark_direct_code_run_started(seed.seed_id, run.run_id)
+        service.set_run_agent_type(seed.seed_id, run.run_id, "kimi")
+        service.finish_direct_code_run(
+            seed.seed_id,
+            run.run_id,
+            "stdout",
+            stderr="stderr",
+        )
+        updated = service.require_run(run.run_id)
+        self.assertEqual(updated.agent_type, "kimi")
+
+    def test_finish_sync_resolution_stores_agent_type(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("sync resolution agent type", baseline_branch="master")
+        run = StageRun(
+            run_id="ca-20990101-000098-sync",
+            seed_id=seed.seed_id,
+            stage=StageName.ca,
+            status=RunStatus.running,
+            task_id="task-ca-sync",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        seed.latest_run_id = run.run_id
+        seed.status = SeedStatus.ca_queued
+        service.seed_repo.save(seed)
+        service.set_run_agent_type(seed.seed_id, run.run_id, "claude")
+        service.finish_sync_resolution(seed.seed_id, run.run_id)
+        updated = service.require_run(run.run_id)
+        self.assertEqual(updated.agent_type, "claude")
+        self.assertEqual(updated.summary.get("agent_type"), "claude")
+
+    def test_mark_run_failed_stores_agent_type(self) -> None:
+        service = WorkflowService()
+        seed = service.create_seed("failed run agent type", baseline_branch="master")
+        run = StageRun(
+            run_id="pd-20990101-000097-fail",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.running,
+            task_id="task-pd-fail",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        service.set_run_agent_type(seed.seed_id, run.run_id, "opencode")
+        service.mark_run_failed(
+            seed.seed_id,
+            run.run_id,
+            "simulated failure",
+        )
+        updated = service.require_run(run.run_id)
+        self.assertEqual(updated.agent_type, "opencode")
+        self.assertEqual(updated.summary.get("agent_type"), "opencode")
+
+    def test_mark_direct_code_run_failed_stores_agent_type(self) -> None:
+        service = WorkflowService()
+        seed, run = service.create_direct_code_seed("direct fail agent type")
+        service.mark_direct_code_run_started(seed.seed_id, run.run_id)
+        service.set_run_agent_type(seed.seed_id, run.run_id, "kimi")
+        service.mark_direct_code_run_failed(
+            seed.seed_id,
+            run.run_id,
+            "direct run failed",
+        )
+        updated = service.require_run(run.run_id)
+        self.assertEqual(updated.agent_type, "kimi")
+        self.assertEqual(updated.summary.get("agent_type"), "kimi")
+
+    def test_set_run_agent_type_records_agent_right_after_invoke(self) -> None:
+        """set_run_agent_type is called by daemon right after _invoke_agent returns, before finish/fail."""
+        service = WorkflowService()
+        seed = service.create_seed("set agent type after invoke", baseline_branch="master")
+        run = StageRun(
+            run_id="pd-20990101-000094-setagent",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.running,
+            task_id="task-pd-094",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(run)
+        service.set_run_agent_type(seed.seed_id, run.run_id, "kimi")
+        updated = service.require_run(run.run_id)
+        self.assertEqual(updated.agent_type, "kimi")
+        self.assertEqual(updated.summary.get("agent_type"), "kimi")
+
+    def test_finish_pd_run_without_agent_type_leaves_none(self) -> None:
+        git_service = RecordingGitService()
+        service = WorkflowService(git_service=git_service)
+        seed = service.create_seed("pd no agent type", baseline_branch="master")
+        pd_run = StageRun(
+            run_id="pd-20990101-000095-noagent",
+            seed_id=seed.seed_id,
+            stage=StageName.pd,
+            status=RunStatus.running,
+            task_id="task-pd-095",
+            created_at=0.0,
+            updated_at=0.0,
+        )
+        service.run_repo.save(pd_run)
+        seed.latest_run_id = pd_run.run_id
+        service.seed_repo.save(seed)
+        summary_path = write_summary_file({
+            "idea": "test",
+            "target_component": "model",
+            "description": "",
+            "source_refs": [],
+            "commit_sha": "abc",
+            "completed_at": "2099-01-01 00:00:00",
+        })
+        service.finish_pd_run(seed.seed_id, pd_run.run_id, summary_path)
+        updated = service.require_run(pd_run.run_id)
+        self.assertIsNone(updated.agent_type)
+        self.assertNotIn("agent_type", updated.summary)
+
+
 if __name__ == "__main__":
     unittest.main()

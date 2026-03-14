@@ -6,7 +6,7 @@
         {% if run.created_at %}
         <p class="section-label">{{ run.created_at|format_ts_timeline }}</p>
         {% endif %}
-        <p class="text-sm font-medium text-white">{% if run.stage.value == 'pd' %}Plan-Do{% elif run.stage.value == 'ca' %}Check-Action{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}</p>
+        <p class="text-sm font-medium text-white">{% if run.stage.value == 'pd' %}Plan-Do{% elif run.stage.value == 'ca' %}Check-Action{% else %}{{ run.stage.value|upper }}{% endif %} · {{ run.status.value }}{% if run.agent_type or (run.summary and run.summary.get('agent_type')) %} · <span class="text-slate-400">{{ run.agent_type or run.summary.get('agent_type', '') }}</span>{% endif %}</p>
         <p class="mt-1 text-xs text-slate-500 font-mono-id">{{ run.run_id }}</p>
       </div>
       <div class="flex items-center gap-2 shrink-0">
@@ -62,7 +62,7 @@
         <div class="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <div>
             <p class="font-medium text-white">Run log · {{ run.run_id }}</p>
-            <p class="text-xs text-slate-500">{{ run.stage.value|upper }} · {{ run.status.value }}</p>
+            <p class="text-xs text-slate-500">{{ run.stage.value|upper }} · {{ run.status.value }}{% if run.agent_type or (run.summary and run.summary.get('agent_type')) %} · {{ run.agent_type or run.summary.get('agent_type', '') }}{% endif %}</p>
           </div>
           <button
             class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-600 hover:bg-slate-900"

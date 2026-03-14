@@ -962,6 +962,17 @@ class WorkflowService:
             raise KeyError(f"Unknown run_id={run_id}")
         return run
 
+    def set_run_agent_type(self, seed_id: str, run_id: str, agent_type: str) -> StageRun:
+        """Record which agent ran this run. Call right after invoking the agent, before finish/fail."""
+        run = self.require_run(run_id)
+        run.agent_type = agent_type
+        if run.summary is None:
+            run.summary = {}
+        run.summary["agent_type"] = agent_type
+        run.updated_at = now_ts()
+        self.run_repo.save(run)
+        return run
+
     def is_seed_eligible_for_stage(self, seed_id: str | None, stage: str) -> bool:
         """True if this seed is in a state that allows the given stage to run (used at claim time to avoid PD/CA races)."""
         if not seed_id:
